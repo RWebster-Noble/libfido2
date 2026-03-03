@@ -1,3 +1,10 @@
+* Version 1.17.0 (TBD)
+ ** Added support for persistent PC/SC connections to improve compatibility
+    with NFC authenticators that reset on connection closure. Enable with
+    FIDO_PERSISTENT_PCSC flag or FIDO_PERSISTENT_PCSC environment variable.
+ ** New fido_init flag:
+  - FIDO_PERSISTENT_PCSC.
+
 * Version 1.16.0 (2025-05-06)
  ** Added support for enterprise attestation.
  ** Improved handling of invalid key handles in U2F key lookup; gh#819.
