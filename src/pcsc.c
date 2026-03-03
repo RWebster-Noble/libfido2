@@ -32,6 +32,10 @@
 #define APDULEN 264	/* 261 rounded up to the nearest multiple of 8 */
 #define READERS 8	/* maximum number of readers */
 
+/* persistent connection handle for reuse */
+static SCARDHANDLE pcsc_persistent_handle = 0;
+static SCARDCONTEXT pcsc_persistent_context = 0;
+
 struct pcsc {
 	SCARDCONTEXT     ctx;
 	SCARDHANDLE      h;
@@ -141,6 +145,7 @@ copy_info(fido_dev_info_t *di, SCARDCONTEXT ctx, const char *reader, size_t idx)
 		fido_log_debug("%s: SCardConnect 0x%lx", __func__, (long)s);
 		goto fail;
 	}
+	fido_log_debug("%s: %s", __func__, reader);
 	if (prepare_io_request(prot, &req) < 0) {
 		fido_log_debug("%s: prepare_io_request", __func__);
 		goto fail;
@@ -150,6 +155,13 @@ copy_info(fido_dev_info_t *di, SCARDCONTEXT ctx, const char *reader, size_t idx)
 		fido_log_debug("%s: asprintf", __func__);
 		goto fail;
 	}
+	
+	/* In persistent mode, save handle BEFORE nfc_is_fido so it can reuse it */
+	if (fido_pcsc_persistent_enabled()) {
+		pcsc_persistent_handle = h;
+		pcsc_persistent_context = ctx;
+	}
+	
 	if (nfc_is_fido(di->path) == false) {
 		fido_log_debug("%s: nfc_is_fido: %s", __func__, di->path);
 		goto fail;
@@ -160,8 +172,19 @@ copy_info(fido_dev_info_t *di, SCARDCONTEXT ctx, const char *reader, size_t idx)
 
 	ok = 0;
 fail:
-	if (h != 0)
+	/* In persistent mode, handle was consumed by fido_pcsc_open or needs to be saved */
+	if (fido_pcsc_persistent_enabled()) {
+		if (h != 0 && ok == 0 && pcsc_persistent_handle != 0) {
+			/* Handle wasn't consumed, save it for later */
+			pcsc_persistent_handle = h;
+			pcsc_persistent_context = ctx;
+		} else if (h != 0) {
+			/* Failed, disconnect */
+			SCardDisconnect(h, SCARD_LEAVE_CARD);
+		}
+	} else if (h != 0) {
 		SCardDisconnect(h, SCARD_LEAVE_CARD);
+	}
 	if (ok < 0) {
 		free(di->path);
 		free(di->manufacturer);
@@ -230,7 +253,8 @@ fido_pcsc_manifest(fido_dev_info_t *devlist, size_t ilen, size_t *olen)
 	r = FIDO_OK;
 out:
 	free(buf);
-	if (ctx != 0)
+	/* In persistent mode, don't release context - it's saved in copy_info */
+	if (ctx != 0 && !fido_pcsc_persistent_enabled())
 		SCardReleaseContext(ctx);
 
 	return r;
@@ -248,6 +272,38 @@ fido_pcsc_open(const char *path)
 	LONG s;
 
 	memset(&req, 0, sizeof(req));
+
+	/* In persistent mode, reuse the existing connection from copy_info() */
+	if (fido_pcsc_persistent_enabled()) {
+		if (pcsc_persistent_handle != 0) {
+			if ((dev = calloc(1, sizeof(*dev))) == NULL)
+				goto fail;
+			dev->ctx = pcsc_persistent_context;
+			dev->h = pcsc_persistent_handle;
+			/* Only clear if this is NOT being called from nfc_is_fido (path contains pcsc://) */
+			if (strncmp(path, FIDO_PCSC_PREFIX, strlen(FIDO_PCSC_PREFIX)) != 0) {
+				/* Called from app, not from nfc_is_fido during enumeration */
+				pcsc_persistent_handle = 0;
+				pcsc_persistent_context = 0;
+			}
+			/* Need to get the protocol for the io_request */
+			DWORD prot_len = sizeof(prot);
+			if ((s = SCardStatus(dev->h, NULL, NULL, NULL, &prot, NULL, &prot_len)) 
+			    != SCARD_S_SUCCESS) {
+				fido_log_debug("%s: SCardStatus 0x%lx", __func__, (long)s);
+				free(dev);
+				dev = NULL;
+				goto fail;
+			}
+			if (prepare_io_request(prot, &dev->req) < 0) {
+				fido_log_debug("%s: prepare_io_request", __func__);
+				free(dev);
+				dev = NULL;
+				goto fail;
+			}
+			return dev;
+		}
+	}
 
 	if ((s = SCardEstablishContext(SCARD_SCOPE_SYSTEM, NULL, NULL,
 	    &ctx)) != SCARD_S_SUCCESS || ctx == 0) {
@@ -291,6 +347,13 @@ void
 fido_pcsc_close(void *handle)
 {
 	struct pcsc *dev = handle;
+
+	/* In persistent mode, don't disconnect - connection stays open */
+	if (fido_pcsc_persistent_enabled()) {
+		explicit_bzero(dev->rx_buf, sizeof(dev->rx_buf));
+		free(dev);
+		return;
+	}
 
 	if (dev->h != 0)
 		SCardDisconnect(dev->h, SCARD_LEAVE_CARD);
@@ -378,6 +441,7 @@ fido_dev_set_pcsc(fido_dev_t *d)
 		fido_log_debug("%s: device open", __func__);
 		return -1;
 	}
+
 	d->io_own = true;
 	d->io = (fido_dev_io_t) {
 		fido_pcsc_open,

@@ -305,15 +305,22 @@ nfc_is_fido(const char *path)
 		fido_log_debug("%s: fido_dev_new", __func__);
 		goto fail;
 	}
+	
 	/* fido_dev_open selects the fido applet */
 	if ((r = fido_dev_open(d, path)) != FIDO_OK) {
 		fido_log_debug("%s: fido_dev_open: 0x%x", __func__, r);
 		goto fail;
 	}
+	
+	/* In persistent mode, skip the close - connection will be reused */
+	if (fido_pcsc_persistent_enabled()) {
+		fido = true;
+		goto fail;  /* goto fail to free dev struct but not close handle */
+	}
+	
 	if ((r = fido_dev_close(d)) != FIDO_OK) {
 		fido_log_debug("%s: fido_dev_close: 0x%x", __func__, r);
 		goto fail;
-
 	}
 
 	fido = true;
