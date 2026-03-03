@@ -33,8 +33,9 @@
 #define READERS 8	/* maximum number of readers */
 
 /* persistent connection handle for reuse */
-static SCARDHANDLE pcsc_persistent_handle = 0;
-static SCARDCONTEXT pcsc_persistent_context = 0;
+static TLS SCARDHANDLE pcsc_persistent_handle = 0;
+static TLS SCARDCONTEXT pcsc_persistent_context = 0;
+static TLS int pcsc_handle_consumed = 0;  /* Track if handle was used by fido_pcsc_open */
 
 struct pcsc {
 	SCARDCONTEXT     ctx;
@@ -160,6 +161,7 @@ copy_info(fido_dev_info_t *di, SCARDCONTEXT ctx, const char *reader, size_t idx)
 	if (fido_pcsc_persistent_enabled()) {
 		pcsc_persistent_handle = h;
 		pcsc_persistent_context = ctx;
+		pcsc_handle_consumed = 0;  /* Reset consumption flag */
 	}
 	
 	if (nfc_is_fido(di->path) == false) {
@@ -174,10 +176,13 @@ copy_info(fido_dev_info_t *di, SCARDCONTEXT ctx, const char *reader, size_t idx)
 fail:
 	/* In persistent mode, handle was consumed by fido_pcsc_open or needs to be saved */
 	if (fido_pcsc_persistent_enabled()) {
-		if (h != 0 && ok == 0 && pcsc_persistent_handle != 0) {
+		if (h != 0 && ok == 0 && !pcsc_handle_consumed) {
 			/* Handle wasn't consumed, save it for later */
 			pcsc_persistent_handle = h;
 			pcsc_persistent_context = ctx;
+		} else if (h != 0 && pcsc_handle_consumed) {
+			/* Handle was consumed by fido_pcsc_open, don't disconnect */
+			fido_log_debug("%s: PERSISTENT: connection kept open", __func__);
 		} else if (h != 0) {
 			/* Failed, disconnect */
 			SCardDisconnect(h, SCARD_LEAVE_CARD);
@@ -273,15 +278,22 @@ fido_pcsc_open(const char *path)
 
 	memset(&req, 0, sizeof(req));
 
+	fido_log_debug("%s: fido_pcsc_persistent_enabled=%d", __func__,
+	    (int)fido_pcsc_persistent_enabled());
+
 	/* In persistent mode, reuse the existing connection from copy_info() */
 	if (fido_pcsc_persistent_enabled()) {
 		if (pcsc_persistent_handle != 0) {
+			fido_log_debug("%s: PERSISTENT: reusing connection", __func__);
 			if ((dev = calloc(1, sizeof(*dev))) == NULL)
 				goto fail;
 			dev->ctx = pcsc_persistent_context;
 			dev->h = pcsc_persistent_handle;
+			/* Mark handle as consumed */
+			pcsc_handle_consumed = 1;
 			/* Only clear if this is NOT being called from nfc_is_fido (path contains pcsc://) */
-			if (strncmp(path, FIDO_PCSC_PREFIX, strlen(FIDO_PCSC_PREFIX)) != 0) {
+			int is_pcsc_path = (strncmp(path, FIDO_PCSC_PREFIX, strlen(FIDO_PCSC_PREFIX)) == 0);
+			if (!is_pcsc_path) {
 				/* Called from app, not from nfc_is_fido during enumeration */
 				pcsc_persistent_handle = 0;
 				pcsc_persistent_context = 0;
@@ -302,6 +314,8 @@ fido_pcsc_open(const char *path)
 				goto fail;
 			}
 			return dev;
+		} else {
+			fido_log_debug("%s: PERSISTENT: creating new connection", __func__);
 		}
 	}
 

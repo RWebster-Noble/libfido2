@@ -12,7 +12,7 @@
 #endif
 
 static TLS bool disable_u2f_fallback;
-static int fido_pcsc_persistent;
+static TLS int fido_pcsc_persistent;
 
 #ifdef FIDO_FUZZ
 static void
