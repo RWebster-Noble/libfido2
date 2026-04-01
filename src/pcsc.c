@@ -292,13 +292,9 @@ fido_pcsc_open(const char *path)
 			dev->h = pcsc_persistent_handle;
 			/* Mark handle as consumed */
 			pcsc_handle_consumed = true;
-			/* Only clear if this is NOT being called from nfc_is_fido (path contains pcsc://) */
-			int is_pcsc_path = (strncmp(path, FIDO_PCSC_PREFIX, strlen(FIDO_PCSC_PREFIX)) == 0);
-			if (!is_pcsc_path) {
-				/* Called from app, not from nfc_is_fido during enumeration */
-				pcsc_persistent_handle = 0;
-				pcsc_persistent_context = 0;
-			}
+			/* Clear persistent handle to prevent reuse */
+			pcsc_persistent_handle = 0;
+			pcsc_persistent_context = 0;
 			/* Need to get the protocol for the io_request */
 			DWORD prot_len = sizeof(prot);
 			if ((s = SCardStatus(dev->h, NULL, NULL, NULL, &prot, NULL, &prot_len)) 
