@@ -306,6 +306,11 @@ fido_pcsc_open(const char *path)
 			return dev;
 		} else {
 			fido_log_debug("%s: PERSISTENT: creating new connection", __func__);
+			/* Release any orphaned persistent context from copy_info() */
+			if (pcsc_persistent_context != 0) {
+				SCardReleaseContext(pcsc_persistent_context);
+				pcsc_persistent_context = 0;
+			}
 		}
 	}
 
