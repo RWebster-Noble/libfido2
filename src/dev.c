@@ -12,7 +12,7 @@
 #endif
 
 static TLS bool disable_u2f_fallback;
-static TLS int fido_pcsc_persistent;
+static TLS bool fido_pcsc_persistent;
 
 #ifdef FIDO_FUZZ
 static void
@@ -414,8 +414,7 @@ fido_init(int flags)
 
 	disable_u2f_fallback = (flags & FIDO_DISABLE_U2F_FALLBACK);
 
-	if (flags & FIDO_PERSISTENT_PCSC || getenv("FIDO_PERSISTENT_PCSC") != NULL)
-		fido_pcsc_persistent = 1;
+	fido_pcsc_persistent = (flags & FIDO_PERSISTENT_PCSC || getenv("FIDO_PERSISTENT_PCSC") != NULL);
 }
 
 fido_dev_t *
@@ -609,7 +608,7 @@ fido_dev_set_timeout(fido_dev_t *dev, int ms)
 	return (FIDO_OK);
 }
 
-int
+bool
 fido_pcsc_persistent_enabled(void)
 {
 	return (fido_pcsc_persistent);
