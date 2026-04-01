@@ -157,14 +157,7 @@ copy_info(fido_dev_info_t *di, SCARDCONTEXT ctx, const char *reader, size_t idx)
 		fido_log_debug("%s: asprintf", __func__);
 		goto fail;
 	}
-	
-	/* In persistent mode, save handle BEFORE nfc_is_fido so it can reuse it */
-	if (fido_pcsc_persistent_enabled()) {
-		pcsc_persistent_handle = h;
-		pcsc_persistent_context = ctx;
-		pcsc_handle_consumed = false;  /* Reset consumption flag */
-	}
-	
+
 	if (nfc_is_fido(di->path) == false) {
 		fido_log_debug("%s: nfc_is_fido: %s", __func__, di->path);
 		goto fail;
