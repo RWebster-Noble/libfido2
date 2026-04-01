@@ -357,17 +357,17 @@ fido_pcsc_close(void *handle)
 {
 	struct pcsc *dev = handle;
 
-	/* In persistent mode, don't disconnect - connection stays open */
-	if (fido_pcsc_persistent_enabled()) {
-		explicit_bzero(dev->rx_buf, sizeof(dev->rx_buf));
-		free(dev);
-		return;
-	}
-
 	if (dev->h != 0)
 		SCardDisconnect(dev->h, SCARD_LEAVE_CARD);
 	if (dev->ctx != 0)
 		SCardReleaseContext(dev->ctx);
+
+	/* Clear persistent handles if this was a persistent connection */
+	if (fido_pcsc_persistent_enabled()) {
+		pcsc_persistent_handle = 0;
+		pcsc_persistent_context = 0;
+		pcsc_handle_consumed = false;
+	}
 
 	explicit_bzero(dev->rx_buf, sizeof(dev->rx_buf));
 	free(dev);
@@ -450,7 +450,6 @@ fido_dev_set_pcsc(fido_dev_t *d)
 		fido_log_debug("%s: device open", __func__);
 		return -1;
 	}
-
 	d->io_own = true;
 	d->io = (fido_dev_io_t) {
 		fido_pcsc_open,
